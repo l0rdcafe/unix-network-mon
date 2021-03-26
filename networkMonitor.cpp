@@ -101,7 +101,6 @@ int main() {
   is_running = true;
   has_forked = false;
   while (is_running) {
-      cout << "Number of client connections" << client_conns.size() << endl;
       // stop running when all client conns are closed and we have forked
       if (has_forked && client_conns.size() == 0) {
         cout << "All client connections dropped – Shutting down..." << endl;
@@ -130,7 +129,6 @@ int main() {
 
       for (int i = 0; i < client_conns.size(); i++) {
         if (FD_ISSET(client_conns[i], &client_fds)) {
-        cout << "Client with pid '" << child_pids[i] << "' is connected to fd '" << client_conns[i] << "'" << endl;
           bzero(read_buffer, sizeof(read_buffer));
           if (read(client_conns[i], read_buffer, buffer_size - 1) < 0) {
             cout << "networkMonitor: Failed to read from child process – Terminating..." << endl;
@@ -139,7 +137,6 @@ int main() {
 
           // close the connection when client sends Done or an empty buffer
           if (strcmp(read_buffer, done_cmd.c_str()) == 0 || strlen(read_buffer) == 0) {
-            cout << "Closing connection to child with pid '" << child_pids[i] << "' and fd '" << client_conns[i] << "'" << endl;
             FD_CLR(client_conns[i], &client_fds);
             close(client_conns[i]);
             client_conns.erase(client_conns.begin() + i);
@@ -148,7 +145,6 @@ int main() {
 
           // when interface monitor is down
           if (strcmp(read_buffer, link_down_res.c_str()) == 0) {
-            cout << "Client with pid '" << child_pids[i] << "' and fd '" << client_conns[i] << "' is down" << endl;
             // tell it to Set Link Up
             if (write(client_conns[i], link_up_cmd.c_str(), strlen(link_up_cmd.c_str())) < strlen(link_up_cmd.c_str())) {
               cout << "networkMonitor: Failed to send Set Link Up command to child process – Terminating..." << endl;
@@ -170,7 +166,13 @@ int main() {
               cout << "networkMonitor: Failed to read child process response to Monitor command – Terminating..." << endl;
               fail();
             }
-          } else {
+
+            if (strcmp(read_buffer, mon_res.c_str()) == 0) {
+              bzero(read_buffer, sizeof(read_buffer));
+            }
+          }
+
+          if (strlen(read_buffer) > 0 && strcmp(read_buffer, done_cmd.c_str()) != 0 && strcmp(read_buffer, link_down_res.c_str()) != 0 && strcmp(read_buffer, ready_cmd.c_str()) != 0 && strcmp(read_buffer, mon_res.c_str()) != 0) {
             // print interface stats
             cout << read_buffer << endl << endl;
           }
@@ -181,7 +183,6 @@ int main() {
 
 
   for (int i = 0; i < client_conns.size(); i++) {
-    cout << "networkMonitor: Killing client with pid '" << child_pids[i] << "' and fd '" << client_conns[i] << "'" << endl;
     kill(child_pids[i], SIGINT);
     sleep(1);
     FD_CLR(client_conns[i], &client_fds);

@@ -133,6 +133,9 @@ int main(int argc, char* argv[]) {
       cout << "intfMonitor: Failed to respond to Monitor command – Terminating..." << endl;
       fail();
     }
+
+    // give it a second
+    sleep(1);
   }
 
   // now the interface monitor can poll stats
@@ -239,6 +242,7 @@ int main(int argc, char* argv[]) {
         cout << "intfMonitor: Failed to write Link Down command to network monitor – Terminating..." << endl;
         fail();
       }
+      down_count++;
 
       bzero(read_buffer, sizeof(read_buffer));
       // read Set Link Up response
@@ -264,6 +268,8 @@ int main(int argc, char* argv[]) {
           cout << "intfMonitor: Failed to Set Link Up using ioctl – Terminating..." << endl;
           fail();
         }
+
+        up_count++;
       }
     }
 
