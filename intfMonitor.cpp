@@ -1,7 +1,9 @@
 #include <errno.h>
 #include <dirent.h>
+#include <sys/ioctl.h>
 #include <iostream>
 #include <fstream>
+#include <net/if.h>
 #include <string.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -21,6 +23,7 @@ char write_buffer[buffer_size];
 int buff_len;
 
 const string mon_cmd = "Monitor";
+const string link_up_cmd = "Set Link Up";
 // cmd responses
 const string ready_res = "Ready";
 const string mon_res = "Monitoring";
@@ -48,6 +51,7 @@ void report_done(int socket_fd) {
   close(socket_fd);
 }
 
+// single point of failure
 void fail() {
   cout << "intfMonitor: Process " << getpid() << " has failed" << endl;
   perror(strerror(errno));
@@ -104,7 +108,8 @@ int main(int argc, char* argv[]) {
     fail();
   }
 
-  if (write(socket_fd, ready_res.c_str(), strlen(ready_res.c_str()) + 1) < 0) {
+  // notify network monitor that interface monitor is Ready
+  if (write(socket_fd, ready_res.c_str(), strlen(ready_res.c_str()))  < strlen(ready_res.c_str())) {
     cout << "intfMonitor: Failed to send Ready to network monitor – Terminating..." << endl;
     fail();
   }
@@ -113,9 +118,9 @@ int main(int argc, char* argv[]) {
   const string base_path = "/sys/class/net/";
   // base path + eth0 + null byte
   const string intf_path = base_path + intf_name;
+  const string intf_stats_path = intf_path + "/statistics";
 
-  string intf_stats_path = intf_path + "/statistics";
-
+  // read Monitor command from network monitor
   bzero(read_buffer, sizeof(read_buffer));
   if (read(socket_fd, read_buffer, buffer_size - 1) < 0) {
     cout << "intfMonitor: Failed to read Monitor command from network monitor – Terminating..." << endl;
@@ -123,12 +128,14 @@ int main(int argc, char* argv[]) {
   }
 
   if (strcmp(read_buffer, mon_cmd.c_str()) == 0) {
-    if (write(socket_fd, mon_res.c_str(), strlen(mon_res.c_str())) + 1 < 0) {
+    // respond with Monitoring
+    if (write(socket_fd, mon_res.c_str(), strlen(mon_res.c_str())) < strlen(mon_res.c_str())) {
       cout << "intfMonitor: Failed to respond to Monitor command – Terminating..." << endl;
       fail();
     }
   }
 
+  // now the interface monitor can poll stats
   is_running = true;
   while (is_running) {
     struct dirent* intf_dir_entry = NULL;
@@ -153,6 +160,7 @@ int main(int argc, char* argv[]) {
       fail();
     }
 
+    // state, up_count and down_count live 1 directory level above other stats
     while ((intf_dir_entry = readdir(intf_dir)) != NULL) {
       if (strcmp(intf_dir_entry->d_name, "operstate") == 0) {
         string operstate_path = intf_path + "/operstate";
@@ -180,6 +188,7 @@ int main(int argc, char* argv[]) {
       }
     }
 
+    // open /statistics directory
     DIR* intf_stats_dir = opendir(intf_stats_path.c_str());
     if (intf_stats_dir == NULL) {
       report_done(socket_fd);
@@ -187,6 +196,7 @@ int main(int argc, char* argv[]) {
       fail();
     }
 
+    // parse interface stats
     while ((intf_dir_entry = readdir(intf_stats_dir)) != NULL) {
       if (strcmp(intf_dir_entry->d_name, "rx_bytes") == 0) {
         rx_bytes = get_intf_stat(socket_fd, intf_stats_path, "/rx_bytes");
@@ -221,13 +231,45 @@ int main(int argc, char* argv[]) {
       }
     }
 
-    if (1) {
+    // when interface is down
+    if (strcmp(state.c_str(), "down") == 0) {
       bzero(write_buffer, sizeof(write_buffer));
-      if (write(socket_fd, ))
+      // send Link Down to network monitor
+      if (write(socket_fd, link_down.c_str(), strlen(link_down.c_str())) < strlen(link_down.c_str())) {
+        cout << "intfMonitor: Failed to write Link Down command to network monitor – Terminating..." << endl;
+        fail();
+      }
+
+      bzero(read_buffer, sizeof(read_buffer));
+      // read Set Link Up response
+      if (read(socket_fd, read_buffer, buffer_size - 1) < 0) {
+        cout << "intfMonitor: Failed to read Set Link Up command – Terminating..." << endl;
+        fail();
+      }
+
+      if (strcmp(read_buffer, link_up_cmd.c_str()) == 0) {
+        int intf_socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+        struct ifreq ifr;
+
+        if (intf_socket_fd < 0) {
+          cout << "intfMonitor: Failed to open interface socket – Terminating..." << endl;
+          fail();
+        }
+
+        memset(&ifr, 0, sizeof(ifr));
+        strncpy(ifr.ifr_name, intf_name.c_str(), IFNAMSIZ);
+        ifr.ifr_flags |= IFF_UP;
+        // set interface link up
+        if (ioctl(intf_socket_fd, SIOCSIFFLAGS, &ifr) < 0) {
+          cout << "intfMonitor: Failed to Set Link Up using ioctl – Terminating..." << endl;
+          fail();
+        }
+      }
     }
 
     bzero(write_buffer, sizeof(write_buffer));
     buff_len = sprintf(write_buffer, "Interface name: %s state:%s up_count:%d down_count:%d rx_bytes:%d rx_dropped:%d rx_errors:%d rx_packets:%d tx_bytes:%d tx_dropped:%d tx_errors:%d tx_packets:%d", intf_name.c_str(), state.c_str(), up_count, down_count, rx_bytes, rx_dropped, rx_errors, rx_packets, tx_bytes, tx_dropped, tx_errors, tx_packets);
+    // send interface stats to network monitor
     if (write(socket_fd, write_buffer, buff_len) < 0) {
       cout << "intfMonitor: Failed to write to network monitor – Terminating..." << endl;
       fail();

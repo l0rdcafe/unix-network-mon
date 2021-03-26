@@ -17,6 +17,7 @@ bool is_running;
 bool has_forked;
 
 const int n_intfs = 3;
+// on ubuntu in digital ocean, the following 3 interfaces are found
 const string intf_name[n_intfs] = { "lo", "eth0", "eth1" };
 const string intf_mon = "./intfMonitor";
 const int buffer_size = 512;
@@ -114,6 +115,7 @@ int main() {
           execlp(intf_mon.c_str(), intf_mon.c_str(), intf_name[i].c_str(), NULL);
         }
 
+        // accept client connection onto existing conns
         client_conns.push_back(accept(master_sock_fd, NULL, NULL));
         if (client_conns[i] < 0) {
           cout << "networkMonitor: Failed to accept client connection from child process – Terminating..." << endl;
@@ -144,27 +146,33 @@ int main() {
             child_pids.erase(child_pids.begin() + i);
           }
 
+          // when interface monitor is down
           if (strcmp(read_buffer, link_down_res.c_str()) == 0) {
             cout << "Client with pid '" << child_pids[i] << "' and fd '" << client_conns[i] << "' is down" << endl;
+            // tell it to Set Link Up
             if (write(client_conns[i], link_up_cmd.c_str(), strlen(link_up_cmd.c_str())) < strlen(link_up_cmd.c_str())) {
               cout << "networkMonitor: Failed to send Set Link Up command to child process – Terminating..." << endl;
               fail();
             }
           }
 
-          cout << read_buffer << endl << endl;
-
+          // when interface monitor is Ready
           if (strcmp(read_buffer, ready_cmd.c_str()) == 0) {
+            // tell it to Monitor
             if (write(client_conns[i], mon_cmd.c_str(), strlen(mon_cmd.c_str())) < strlen(mon_cmd.c_str())) {
               cout << "networkMonitor: Failed to send Monitor command to child process – Terminating..." << endl;
               fail();
             }
 
             bzero(read_buffer, sizeof(read_buffer));
+            // make sure it responded with Monitoring
             if (read(client_conns[i], read_buffer, buffer_size - 1) < 0) {
               cout << "networkMonitor: Failed to read child process response to Monitor command – Terminating..." << endl;
               fail();
             }
+          } else {
+            // print interface stats
+            cout << read_buffer << endl << endl;
           }
         }
       }
